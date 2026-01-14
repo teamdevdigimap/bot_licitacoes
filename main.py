@@ -17,7 +17,7 @@ DATA_FIM    = input("\nDigite a Data FINAL   (AAAAMMDD): ").strip() or datetime.
 PALAVRAS_CHAVE = [
     "geoprocessamento", "mapeamento", "satélite", "topografia", "drone", 
     "batimetria", "georreferenciamento", "cartografia", "geografia", 
-    "geoserviços", "sensoriamento remoto", "geo", "sat", "levantamento", 
+    "geoserviços", "sensoriamento remoto", "levantamento", 
     "aerolevantamento", "sondagem", "sondagens", "geotec", "geotéc", 
     "levantamento", "topográfico", "planialtim", "aeronave remotamente pilotada"
 ]
@@ -28,7 +28,7 @@ CAMINHO_ATUAL = os.getcwd()
 
 # ================= EXECUÇÃO =================
 print("==================================================")
-print(f"   COLETOR UNIFICADO - CORRIGIDO ({DATA_INICIO}-{DATA_FIM})")
+print(f"   COLETOR UNIFICADO - ({DATA_INICIO}-{DATA_FIM})")
 print("==================================================")
 
 df_pncp = bot_pncp.executar_coleta_pncp(DATA_INICIO, DATA_FIM, PALAVRAS_CHAVE)
