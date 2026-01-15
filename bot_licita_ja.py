@@ -7,29 +7,27 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-api_key_global = os.environ["LICITAJA_API_KEY"]
+# Tenta pegar do .env, se não tiver, usa a fixa (fallback)
+api_key_env = os.environ.get("LICITAJA_API_KEY")
+API_KEY_FIXA = "46BE17D544506A8DE5996A880613D6FA" # Insira sua chave aqui se não usar .env
 
 def limpar_texto(texto):
-    """Remove caracteres que quebram o CSV (Enter, Tab, Ponto-e-vírgula)"""
-    if pd.isna(texto):
-        return ""
+    if pd.isna(texto): return ""
     texto = str(texto)
-    # Substitui quebras de linha e ; por espaço
     texto_limpo = re.sub(r'[\r\n\t;]', ' ', texto)
     return " ".join(texto_limpo.split())
 
 def formatar_processo(valor):
-    """Força o Excel a ler como texto adicionando ' no início"""
+    """Envolve o valor em aspas duplas"""
     if pd.isna(valor) or valor == "" or valor == "Não informado":
         return "Não informado"
     
     val_str = str(valor)
-    # Se for float (ex: 123.0), remove o decimal
     if val_str.endswith('.0'):
         val_str = val_str[:-2]
         
-    # Adiciona o apóstrofo para travar a formatação no Excel
-    return f"'{val_str}"
+    # ATUALIZADO: Coloca entre aspas duplas
+    return f'"{val_str}"'
 
 def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
     dt_ini_fmt = f"{data_inicio_raw[:4]}-{data_inicio_raw[4:6]}-{data_inicio_raw[6:]}"
@@ -37,21 +35,23 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
 
     print(f"\n[LicitaJá] Iniciando Coleta: {dt_ini_fmt} a {dt_fim_fmt}")
     
-    API_KEY = api_key_global.strip()
+    chave_final = api_key_env if api_key_env else API_KEY_FIXA
+    
     BASE_URL = "https://www.licitaja.com.br/api/v1/tender/search"
     MAX_PAGINAS = 3
     ITENS_POR_PAGINA = 50
 
     todos_registros = []
     headers = {
-        "X-API-KEY": API_KEY,
+        "X-API-KEY": chave_final.strip(),
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
     }
 
     for i, termo in enumerate(palavras_chave):
+        # Pausa de segurança
         if i > 0 and i % 10 == 0:
-            print(f"\n[LicitaJá] Pausa de segurança (90s) para API...")
+            print(f"\n[LicitaJá] Pausa de segurança (90s)...")
             time.sleep(90)
 
         print(f"[LicitaJá] > Buscando termo ({i+1}/{len(palavras_chave)}): '{termo}'...")
@@ -86,65 +86,37 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
                 print(f"  [LicitaJá] Erro: {e}")
                 break
 
-    # --- PROCESSAMENTO E FILTRAGEM RIGOROSA ---
     if todos_registros:
         df = pd.DataFrame(todos_registros)
         
-        # Remove duplicatas brutas
+        # 1. DEDUPLICAÇÃO INTERNA (Pelo ID da API)
         if 'id' in df.columns:
+            qtd_antes = len(df)
             df = df.drop_duplicates(subset=['id'])
+            print(f"[LicitaJá] Deduplicação interna: {qtd_antes} -> {len(df)}")
 
         if not df.empty:
-            # ==============================================================================
-            # 1. FILTRAGEM RIGOROSA LOCAL (PENTE FINO - PALAVRAS CHAVE)
-            # ==============================================================================
-            print("[LicitaJá] Aplicando filtro rigoroso de palavras-chave nos objetos...")
-            qtd_antes = len(df)
-            
-            # Cria regex com todas as palavras (ex: "geo|drone|map")
-            # re.IGNORECASE faz ignorar maiúsculas/minúsculas
+            # 2. FILTRO RIGOROSO PALAVRAS
             regex_termos = '|'.join([re.escape(p) for p in palavras_chave])
-            
-            # Garante que tender_object seja string
             df['tender_object'] = df['tender_object'].astype(str)
+            mask_kw = df['tender_object'].str.contains(regex_termos, case=False, regex=True)
+            df = df[mask_kw].copy()
             
-            # Filtra: Mantém apenas se encontrar ALGUM termo no objeto da licitação
-            mask = df['tender_object'].str.contains(regex_termos, case=False, regex=True)
-            df = df[mask].copy()
-            
-            qtd_depois = len(df)
-            print(f"[LicitaJá] Filtro aplicado: {qtd_antes} -> {qtd_depois} registros restantes.")
-            
-            if df.empty:
-                print("[LicitaJá] Nenhum registro sobrou após o filtro rigoroso.")
-                return pd.DataFrame()
+            if df.empty: return pd.DataFrame()
 
-            # ==============================================================================
-            # 2. FILTRO DE MODALIDADE (ADICIONADO AQUI)
-            # ==============================================================================
-            print("[LicitaJá] Filtrando Modalidades (Apenas Pregão)...")
-            
-            # Modalidades aceitas (tem que bater com o retorno da API no campo 'type')
+            # 3. FILTRO MODALIDADE
             MODALIDADES_ALVO = ["PREGÃO ELETRÔNICO", "PREGÃO PRESENCIAL"]
-            
             if 'type' in df.columns:
-                # Converte para maiúsculo para garantir a comparação e filtra
                 mask_mod = df['type'].str.upper().isin(MODALIDADES_ALVO)
                 df = df[mask_mod].copy()
             
-            if df.empty:
-                print("[LicitaJá] Nenhum registro sobrou após filtro de modalidade.")
-                return pd.DataFrame()
-            # ==============================================================================
+            if df.empty: return pd.DataFrame()
 
-
-            # --- PADRONIZAÇÃO E LIMPEZA ---
+            # Padronização
             df['Fonte API'] = 'LicitaJá'
-            
             colunas_texto = ['agency', 'tender_object', 'city', 'state']
             for col in colunas_texto:
-                if col in df.columns:
-                    df[col] = df[col].apply(limpar_texto)
+                if col in df.columns: df[col] = df[col].apply(limpar_texto)
 
             df['Local'] = df.apply(lambda x: f"{x.get('city', '')} - {x.get('state', '')}", axis=1)
             
@@ -162,17 +134,23 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
             df['Num. Processo'] = df['temp_process'].apply(formatar_processo)
 
             df['Usuário Responsável'] = df.get('biddingPlatform', 'Não informado')
-            df['Link Sistema'] = df.get('url2')
-            df['Link Sistema'] = df['Link Sistema'].fillna(df.get('url', ''))
-            df['Data Fechamento'] = df.get('close_date', 'Não informado')
+            df['Link Sistema'] = df.get('url2').fillna(df.get('url', ''))
+            
+            if 'close_date' in df.columns and not df['close_date'].isna().all():
+                 df['Data Fechamento'] = df['close_date']
+            else:
+                 df['Data Fechamento'] = df.get('opening_date_to', 'Não informado')
+
             df['Modo Disputa'] = "Não informado"
 
             mapa_colunas = {
                 'agency': 'Órgão/Entidade',
                 'tender_object': 'Objeto da Licitação',
-                'catalog_date': 'Data Abertura', 
                 'type': 'Modalidade'
             }
+            if 'publish_date' in df.columns: mapa_colunas['publish_date'] = 'Data Abertura'
+            elif 'catalog_date' in df.columns: mapa_colunas['catalog_date'] = 'Data Abertura'
+            
             df = df.rename(columns=mapa_colunas)
 
             colunas_padrao = [
@@ -181,10 +159,8 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
                 'Valor (R$)', 'Link Sistema', 'Modalidade', 'Modo Disputa', 
                 'Usuário Responsável'
             ]
-            
-            cols_existentes = [c for c in colunas_padrao if c in df.columns]
-            print(f"[LicitaJá] {len(df)} registros processados e exportados.")
-            return df[cols_existentes]
+            cols = [c for c in colunas_padrao if c in df.columns]
+            print(f"[LicitaJá] {len(df)} registros processados.")
+            return df[cols]
 
-    print("[LicitaJá] Nenhum registro encontrado.")
     return pd.DataFrame()

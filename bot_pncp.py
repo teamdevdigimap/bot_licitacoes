@@ -25,19 +25,19 @@ def limpar_texto(texto):
     return " ".join(texto_limpo.split())
 
 def formatar_processo(valor):
+    """Envolve o valor em aspas duplas"""
     if pd.isna(valor) or valor == "" or valor == "Não informado":
         return "Não informado"
     val_str = str(valor)
     if val_str.endswith('.0'):
         val_str = val_str[:-2]
-    return f"'{val_str}"
+    return f'"{val_str}"'
 
 def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
     print(f"\n[PNCP] Iniciando Coleta: {data_inicio} a {data_fim}")
     
     BASE_URL = "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao"
-    #modalidade de pregão eletrônico
-    MODALIDADES = [6, 7]
+    MODALIDADES = [6, 7] # 6=Pregão Eletrônico, 7=Pregão Presencial
 
     todos_registros = []
 
@@ -74,6 +74,11 @@ def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
     if todos_registros:
         df = pd.DataFrame(todos_registros)
 
+        # 1. DEDUPLICAÇÃO INTERNA
+        if 'numeroControlePNCP' in df.columns:
+            df = df.drop_duplicates(subset=['numeroControlePNCP'])
+
+        # 2. CAMPOS BÁSICOS
         if 'orgaoEntidade' in df.columns:
             df['Nome_Orgao'] = df['orgaoEntidade'].apply(
                 lambda x: x.get('razaoSocial', str(x)) if isinstance(x, dict) else str(x)
@@ -92,19 +97,35 @@ def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
         else:
             df['Local_Licitacao'] = "Não informado"
 
+        # 3. FILTRO PALAVRAS-CHAVE
         if palavras_chave:
             regex = '|'.join(palavras_chave)
+            df['objetoCompra'] = df['objetoCompra'].astype(str)
             mask = df['objetoCompra'].str.contains(regex, case=False, na=False)
             df_final = df[mask].copy()
         else:
             df_final = df.copy()
 
         if not df_final.empty:
-            # --- LIMPEZA DE TEXTO (Evita mesclagem) ---
+            # Limpeza
             cols_texto = ['Nome_Orgao', 'Local_Licitacao', 'objetoCompra']
             for col in cols_texto:
                 if col in df_final.columns:
                     df_final[col] = df_final[col].apply(limpar_texto)
+
+            # --- CORREÇÃO DATAS ---
+            # Se dataAberturaProposta não existir, usa dataPublicacaoPncp
+            if 'dataAberturaProposta' not in df_final.columns:
+                 df_final['dataAberturaProposta'] = df_final.get('dataPublicacaoPncp', 'Não informado')
+            
+            # Se dataEncerramentoProposta não existir, preenche com "Não informado" (NÃO COPIA Abertura)
+            if 'dataEncerramentoProposta' not in df_final.columns:
+                 df_final['dataEncerramentoProposta'] = "Não informado"
+            
+            # Formatação (remove o T)
+            for col_data in ['dataAberturaProposta', 'dataEncerramentoProposta']:
+                if col_data in df_final.columns:
+                    df_final[col_data] = df_final[col_data].astype(str).str.replace('T', ' ')
 
             # --- CORREÇÃO PROCESSO ---
             if 'processo' in df_final.columns:
@@ -112,16 +133,22 @@ def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
             else:
                 df_final['Num. Processo'] = "Não informado"
 
-            # Formatação Moeda
+            # --- CORREÇÃO VALOR (O BUG ESTAVA AQUI) ---
+            if 'valorTotalEstimado' not in df_final.columns:
+                df_final['valorTotalEstimado'] = 0.0
+            
             df_final['valorTotalEstimado'] = pd.to_numeric(df_final['valorTotalEstimado'], errors='coerce').fillna(0.0)
+            
             def formatar_brl(valor):
                 if pd.isna(valor) or valor == 0: return "0,00"
                 texto = f"{valor:,.2f}"
                 return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+            
             df_final['Valor_R$'] = df_final['valorTotalEstimado'].apply(formatar_brl)
             
             df_final['Fonte API'] = 'PNCP'
 
+            # Mapeamento (AGORA COM O VALOR INCLUÍDO)
             mapa_renomeacao = {
                 'Local_Licitacao': 'Local',
                 'Nome_Orgao': 'Órgão/Entidade',
@@ -131,7 +158,8 @@ def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
                 'linkSistemaOrigem': 'Link Sistema',
                 'modalidadeNome': 'Modalidade',
                 'modoDisputaNome': 'Modo Disputa',
-                'usuarioNome': 'Usuário Responsável'
+                'usuarioNome': 'Usuário Responsável',
+                'Valor_R$': 'Valor (R$)'  # <--- ESTA LINHA FALTAVA E CAUSAVA O ERRO
             }
             
             df_exportacao = df_final.rename(columns=mapa_renomeacao)
@@ -143,9 +171,13 @@ def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
                 'Usuário Responsável'
             ]
             
-            cols_existentes = [c for c in colunas_padrao if c in df_exportacao.columns]
+            # Preenche colunas faltantes
+            for col in colunas_padrao:
+                if col not in df_exportacao.columns:
+                    df_exportacao[col] = "Não informado"
+            
             print(f"[PNCP] {len(df_exportacao)} registros processados.")
-            return df_exportacao[cols_existentes]
+            return df_exportacao[colunas_padrao]
 
     print("[PNCP] Nenhum registro encontrado.")
     return pd.DataFrame()
