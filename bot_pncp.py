@@ -37,7 +37,7 @@ def executar_coleta_pncp(data_inicio, data_fim, palavras_chave):
     
     BASE_URL = "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao"
     #modalidade de pregão eletrônico
-    MODALIDADES = [6]
+    MODALIDADES = [6, 7]
 
     todos_registros = []
 

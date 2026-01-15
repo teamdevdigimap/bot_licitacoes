@@ -19,7 +19,7 @@ PALAVRAS_CHAVE = [
     "batimetria", "georreferenciamento", "cartografia", "geografia", 
     "geoserviços", "sensoriamento remoto", "levantamento", 
     "aerolevantamento", "sondagem", "sondagens", "geotec", "geotéc", 
-    "levantamento", "topográfico", "planialtim", "aeronave remotamente pilotada"
+    "levantamento", "topográfico", "planialtimétrico", "aeronave remotamente pilotada"
 ]
 print(f"\nPalavras-chave definidas: {PALAVRAS_CHAVE}\n\n")
 

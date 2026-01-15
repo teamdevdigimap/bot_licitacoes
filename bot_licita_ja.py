@@ -140,7 +140,7 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
             df['Usuário Responsável'] = df.get('biddingPlatform', 'Não informado')
             df['Link Sistema'] = df.get('url2')
             df['Link Sistema'] = df['Link Sistema'].fillna(df.get('url', ''))
-            df['Data Fechamento'] = df.get('opening_date_to', 'Não informado')
+            df['Data Fechamento'] = df.get('close_date', 'Não informado')
             df['Modo Disputa'] = "Não informado"
 
             mapa_colunas = {
