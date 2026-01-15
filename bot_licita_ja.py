@@ -2,6 +2,12 @@ import requests
 import pandas as pd
 import time
 import re
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+api_key_global = os.environ["LICITAJA_API_KEY"]
 
 def limpar_texto(texto):
     """Remove caracteres que quebram o CSV (Enter, Tab, Ponto-e-vírgula)"""
@@ -31,7 +37,7 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
 
     print(f"\n[LicitaJá] Iniciando Coleta: {dt_ini_fmt} a {dt_fim_fmt}")
     
-    API_KEY = "46BE17D544506A8DE5996A880613D6FA".strip()
+    API_KEY = api_key_global.strip()
     BASE_URL = "https://www.licitaja.com.br/api/v1/tender/search"
     MAX_PAGINAS = 3
     ITENS_POR_PAGINA = 50
@@ -59,7 +65,7 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
                 "agencyfilter": 0,
                 "items": ITENS_POR_PAGINA,
                 "page": pagina, 
-                "smartsearch": 0 # Mantemos 0 para tentar ser estrito na API também
+                "smartsearch": 0 
             }
 
             try:
@@ -90,7 +96,7 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
 
         if not df.empty:
             # ==============================================================================
-            # FILTRAGEM RIGOROSA LOCAL (PENTE FINO)
+            # 1. FILTRAGEM RIGOROSA LOCAL (PENTE FINO - PALAVRAS CHAVE)
             # ==============================================================================
             print("[LicitaJá] Aplicando filtro rigoroso de palavras-chave nos objetos...")
             qtd_antes = len(df)
@@ -108,11 +114,29 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
             
             qtd_depois = len(df)
             print(f"[LicitaJá] Filtro aplicado: {qtd_antes} -> {qtd_depois} registros restantes.")
-            # ==============================================================================
-
+            
             if df.empty:
                 print("[LicitaJá] Nenhum registro sobrou após o filtro rigoroso.")
                 return pd.DataFrame()
+
+            # ==============================================================================
+            # 2. FILTRO DE MODALIDADE (ADICIONADO AQUI)
+            # ==============================================================================
+            print("[LicitaJá] Filtrando Modalidades (Apenas Pregão)...")
+            
+            # Modalidades aceitas (tem que bater com o retorno da API no campo 'type')
+            MODALIDADES_ALVO = ["PREGÃO ELETRÔNICO", "PREGÃO PRESENCIAL"]
+            
+            if 'type' in df.columns:
+                # Converte para maiúsculo para garantir a comparação e filtra
+                mask_mod = df['type'].str.upper().isin(MODALIDADES_ALVO)
+                df = df[mask_mod].copy()
+            
+            if df.empty:
+                print("[LicitaJá] Nenhum registro sobrou após filtro de modalidade.")
+                return pd.DataFrame()
+            # ==============================================================================
+
 
             # --- PADRONIZAÇÃO E LIMPEZA ---
             df['Fonte API'] = 'LicitaJá'
@@ -146,7 +170,7 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
             mapa_colunas = {
                 'agency': 'Órgão/Entidade',
                 'tender_object': 'Objeto da Licitação',
-                'publish_date': 'Data Abertura', 
+                'catalog_date': 'Data Abertura', 
                 'type': 'Modalidade'
             }
             df = df.rename(columns=mapa_colunas)
