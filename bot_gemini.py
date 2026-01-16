@@ -1,122 +1,110 @@
 import google.generativeai as genai
 import pandas as pd
 import json
-import os
 import time
-from dotenv import load_dotenv
+import math
 
-# Carrega variáveis
-load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    print("ERRO CRÍTICO: Chave GEMINI_API_KEY não encontrada no .env")
-else:
+def configurar_gemini(api_key):
     genai.configure(api_key=api_key)
 
-def processar_lote(model, lote):
-    """
-    Envia lote para API e garante retorno do mesmo tamanho da entrada.
-    """
-    # Prompt otimizado para resposta JSON estrita
-    prompt_sistema = """
-    Aja como especialista em licitações de Engenharia e Geotecnologia.
-    Analise os objetos abaixo. Retorne um JSON (lista de objetos) contendo:
-    - "id": (o mesmo ID recebido)
-    - "IA_STATUS": "SIM" (se for pertinente a engenharia/geo), "NAO" ou "DUVIDA".
-    - "IA_JUSTIFICATIVA": Max 10 palavras.
-    
-    IMPORTANTE: Responda APENAS o JSON válido. Sem crase, sem markdown.
-    """
-    
-    texto_lote = ""
-    ids_no_lote = []
-    
-    # Prepara os dados do lote
-    for index, row in lote.iterrows():
-        # Tenta pegar ID do PNCP, se não tiver pega do LicitaJa, se não tiver usa o Index
-        id_lic = str(row.get('id_pncp', row.get('id_licitaja', index)))
-        obj = str(row.get('objeto', 'Sem objeto')).replace('\n', ' ')
-        
-        texto_lote += f'{{ "id": "{id_lic}", "objeto": "{obj}" }}\n'
-        ids_no_lote.append(id_lic)
-
-    prompt_completo = f"{prompt_sistema}\n\nITENS PARA ANALISAR:\n{texto_lote}"
-
-    # Tenta enviar para a IA
-    try:
-        response = model.generate_content(prompt_completo)
-        
-        # Limpeza bruta do texto para evitar erros de formatação da IA
-        texto_limpo = response.text.strip()
-        if texto_limpo.startswith("```json"):
-            texto_limpo = texto_limpo.replace("```json", "").replace("```", "")
-        elif texto_limpo.startswith("```"):
-            texto_limpo = texto_limpo.replace("```", "")
-            
-        json_retorno = json.loads(texto_limpo)
-        return json_retorno
-
-    except Exception as e:
-        print(f"   [ERRO LOTE] Falha na API: {e}")
-        # CRUCIAL: Retorna lista de erros do mesmo tamanho do lote para não desalinas a planilha
-        lista_erro = []
-        for id_falha in ids_no_lote:
-            lista_erro.append({
-                "id": id_falha,
-                "IA_STATUS": "ERRO API",
-                "IA_JUSTIFICATIVA": "Falha na conexão ou JSON inválido"
-            })
-        return lista_erro
-
-def analisar_licitacoes_com_gemini(df):
+def processar_lote_gemini(df, api_key, perfil_empresa):
     if df.empty:
         return df
 
-    # Usa modelo estável PRO (evita o erro 404 do Flash)
-    NOME_MODELO = 'gemini-pro'
-    print(f"\n[GEMINI] Iniciando análise de {len(df)} registros usando {NOME_MODELO}...")
+    print(f"\n[GEMINI] Iniciando análise em LOTE de {len(df)} registros...")
+    configurar_gemini(api_key)
     
-    try:
-        model = genai.GenerativeModel(NOME_MODELO)
-    except Exception as e:
-        print(f"Erro ao instanciar modelo: {e}")
+    # Modelo Flash é ideal para grandes volumes de texto rápido
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    # Criamos uma cópia com ID temporário para garantir que a IA não se perca
+    df_temp = df.copy().reset_index(drop=True)
+    df_temp['ID_TEMP'] = df_temp.index
+    
+    # Colunas essenciais para a IA analisar (economiza tokens não enviando tudo)
+    cols_analise = ['ID_TEMP', 'Órgão/Entidade', 'Objeto da Licitação']
+    
+    # Se o DF for maior que 30 linhas, dividimos em "chunks" para não estourar 
+    # o limite de resposta (output tokens) do modelo.
+    TAMANHO_CHUNK = 30
+    total_chunks = math.ceil(len(df_temp) / TAMANHO_CHUNK)
+    
+    todos_resultados = []
+
+    for i in range(total_chunks):
+        inicio = i * TAMANHO_CHUNK
+        fim = inicio + TAMANHO_CHUNK
+        chunk = df_temp.iloc[inicio:fim]
+        
+        print(f"  > Processando lote {i+1}/{total_chunks} ({len(chunk)} itens)...")
+        
+        # Converte o pedaço da tabela para JSON string
+        dados_json = chunk[cols_analise].to_json(orient='records', force_ascii=False)
+        
+        prompt = f"""
+        Você é um analista sênior de licitações.
+        
+        PERFIL DA MINHA EMPRESA:
+        {perfil_empresa}
+
+        SUA TAREFA:
+        Analise a lista de licitações abaixo (fornecida em JSON) e classifique a afinidade de cada uma com o meu perfil.
+
+        CLASSIFICAÇÕES POSSÍVEIS:
+        - "ATENDE": O objeto é compatível com meus serviços.
+        - "ATENDE PARCIALMENTE": É da minha área, mas parece exigir complementos ou consórcio.
+        - "NÃO ATENDE": Fora do meu escopo.
+
+        DADOS DE ENTRADA:
+        {dados_json}
+
+        FORMATO DE SAÍDA (Obrigatório):
+        Retorne APENAS um JSON válido (lista de objetos), sem markdown, contendo:
+        - "ID_TEMP": O mesmo ID numérico da entrada.
+        - "IA_STATUS": A classificação.
+        - "IA_JUSTIFICATIVA": Explicação curta (máx 10 palavras).
+        """
+
+        try:
+            response = model.generate_content(prompt)
+            texto_resposta = response.text.strip()
+            
+            # Limpeza caso o Gemini mande ```json ... ```
+            if texto_resposta.startswith("```"):
+                texto_resposta = texto_resposta.replace("```json", "").replace("```", "").strip()
+            
+            resultados_json = json.loads(texto_resposta)
+            todos_resultados.extend(resultados_json)
+            
+            # Pausa de segurança entre lotes
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"  [ERRO] Falha no lote {i+1}: {e}")
+            # Em caso de erro, preenche dummy para não quebrar
+            for idx in chunk['ID_TEMP']:
+                todos_resultados.append({
+                    "ID_TEMP": idx, 
+                    "IA_STATUS": "ERRO API", 
+                    "IA_JUSTIFICATIVA": str(e)
+                })
+
+    # --- MESCLAGEM DOS RESULTADOS ---
+    print("[GEMINI] Consolidando análises...")
+    
+    df_resultados = pd.DataFrame(todos_resultados)
+    
+    # Garante que ID_TEMP seja int para o merge funcionar
+    if not df_resultados.empty and 'ID_TEMP' in df_resultados.columns:
+        df_resultados['ID_TEMP'] = df_resultados['ID_TEMP'].astype(int)
+        
+        # Junta os dados originais com a resposta da IA
+        df_final = df_temp.merge(df_resultados, on='ID_TEMP', how='left')
+        
+        # Remove a coluna auxiliar
+        df_final = df_final.drop(columns=['ID_TEMP'])
+        
+        return df_final
+    else:
+        print("[GEMINI] Não foi possível estruturar a resposta da IA.")
         return df
-
-    resultados_ia = []
-    TAMANHO_LOTE = 5  # Lotes pequenos evitam timeout
-    
-    total = len(df)
-    
-    for i in range(0, total, TAMANHO_LOTE):
-        fim = min(i + TAMANHO_LOTE, total)
-        lote = df.iloc[i:fim]
-        
-        print(f" > Processando {i+1} a {fim} de {total}...")
-        
-        res_lote = processar_lote(model, lote)
-        resultados_ia.extend(res_lote)
-        
-        # Pausa para respeitar limite de requisições por minuto
-        time.sleep(1.5)
-
-    # --- Sincronização Final ---
-    # Adiciona colunas ao DF original garantindo a ordem
-    col_status = []
-    col_justificativa = []
-    
-    # Se a IA devolveu menos registros que o DF, preenche com erro (Segurança)
-    if len(resultados_ia) < total:
-        print("[AVISO] IA retornou menos itens que o enviado. Preenchendo lacunas.")
-        while len(resultados_ia) < total:
-            resultados_ia.append({"IA_STATUS": "NAO PROCESSADO", "IA_JUSTIFICATIVA": "Erro contagem"})
-
-    for res in resultados_ia:
-        col_status.append(res.get('IA_STATUS', 'ERRO'))
-        col_justificativa.append(res.get('IA_JUSTIFICATIVA', 'Sem resposta'))
-
-    df_final = df.copy()
-    df_final['IA_STATUS'] = col_status
-    df_final['IA_JUSTIFICATIVA'] = col_justificativa
-    
-    return df_final
