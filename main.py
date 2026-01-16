@@ -7,6 +7,21 @@ import bot_gemini
 
 # ================= CONFIGURAÇÃO CENTRAL =================
 
+def ler_data_usuario(mensagem):
+    """Lê DD/MM/AAAA e converte para AAAAMMDD para uso interno."""
+    entrada = input(mensagem).strip()
+    if not entrada:
+        return datetime.now().strftime("%Y%m%d")
+    try:
+        # Lê o formato brasileiro
+        data_obj = datetime.strptime(entrada, "%d%m%Y")
+        # Retorna o formato API (AAAAMMDD)
+        return data_obj.strftime("%Y%m%d")
+    except ValueError:
+        print(f"⚠️ Data inválida ('{entrada}'). Usando data de hoje.")
+        return datetime.now().strftime("%Y%m%d")
+    
+
 # 1. CHAVE GEMINI
 # Obtenha em: https://aistudio.google.com/app/apikey
 GEMINI_API_KEY = os.environ['GEMINI_API_KEY'] 
@@ -20,9 +35,12 @@ cadastro técnico e regularização fundiária (REURB).
 NÃO fazemos: Obras civis pesadas (construção de prédios), pavimentação, limpeza ou vigilância.
 """
 
+# Novo Código
 print("\n--- DEFINIÇÃO DO PERÍODO DE BUSCA ---\n")
-DATA_INICIO = input("Digite a Data INICIAL (AAAAMMDD): ").strip() or datetime.now().strftime("%Y%m%d")
-DATA_FIM    = input("Digite a Data FINAL   (AAAAMMDD): ").strip() or datetime.now().strftime("%Y%m%d")
+print("Pressione ENTER para usar a data de hoje.")
+DATA_INICIO = ler_data_usuario("Digite a Data INICIAL (DDMMAAAA): ")
+DATA_FIM    = ler_data_usuario("Digite a Data FINAL   (DDMMAAAA): ")
+
 
 PALAVRAS_CHAVE = [
     "geoprocessamento", "mapeamento", "satélite", "topografia", "drone", 
@@ -112,7 +130,10 @@ if lista_dfs:
         cols_exist = [c for c in cols_view if c in df_final.columns]
         print(df_final[cols_exist].head().to_string())
 
-        nome_arquivo = f"RELATORIO_IA_{DATA_INICIO}_{DATA_FIM}.csv"
+        ini_br = datetime.strptime(DATA_INICIO, "%Y%m%d").strftime("%d-%m-%Y")
+        fim_br = datetime.strptime(DATA_FIM, "%Y%m%d").strftime("%d-%m-%Y")
+
+        nome_arquivo = f"RELATORIO_IA_{ini_br}_{fim_br}.csv"
         caminho = os.path.join(CAMINHO_ATUAL, nome_arquivo)
         
         df_final.to_csv(caminho, index=False, sep=';', encoding='utf-8-sig')
