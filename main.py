@@ -198,6 +198,9 @@ print("==================================================")
 df_pncp = bot_pncp.executar_coleta_pncp(DATA_INICIO, DATA_FIM, PALAVRAS_CHAVE)
 df_licitaja = bot_licita_ja.executar_coleta_licitaja(DATA_INICIO, DATA_FIM, PALAVRAS_CHAVE)
 
+if df_pncp is None: df_pncp = pd.DataFrame()
+if df_licitaja is None: df_licitaja = pd.DataFrame()
+
 # 2. Consolidação
 print("\n--- Unificando Dados ---")
 lista_dfs = []

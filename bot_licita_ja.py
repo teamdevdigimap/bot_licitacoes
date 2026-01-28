@@ -134,8 +134,14 @@ def executar_coleta_licitaja(data_inicio_raw, data_fim_raw, palavras_chave):
             df['Num. Processo'] = df['temp_process'].apply(formatar_processo)
 
             df['Usuário Responsável'] = df.get('biddingPlatform', 'Não informado')
-            df['Link Sistema'] = df.get('url2').fillna(df.get('url', ''))
             
+            if 'url2' in df.columns:
+                df['Link Sistema'] = df['url2'].fillna(df.get('url', 'Não informado'))
+            elif 'url' in df.columns:
+                df['Link Sistema'] = df['url']
+            else:
+                df['Link Sistema'] = "Não informado"            
+                
             if 'close_date' in df.columns and not df['close_date'].isna().all():
                  df['Data Fechamento'] = df['close_date']
             else:
