@@ -5,11 +5,15 @@ from datetime import datetime
 import bot_pncp
 import bot_licita_ja
 import bot_gemini 
+import notifier
 from sqlalchemy import create_engine, text
 
 load_dotenv()
 
+# print("enviando email teste")
+# notifier.enviar_email('C:/Users/matheus.souza/OneDrive - Digimap/Área de Trabalho/Projetos/bot_licitacoes/bot_licitacoes/RELATORIO_NOVOS_20260101_20260615.csv', "mataugusto1999@gmail.com")
 
+print("\n================ BOT LICITAÇÕES ================\n")
 # ================= CONFIGURAÇÃO CENTRAL =================
 #conexão do banco de dados
 DB_CONNECTION = "postgresql://socio_user:s0C1o3@18.234.194.12/eletrobras_db_teste"
@@ -252,7 +256,19 @@ if lista_dfs:
             caminho = os.path.join(CAMINHO_ATUAL, nome_arquivo)
             
             df_novos.to_csv(caminho, index=False, sep=';', encoding='utf-8-sig')
-            print(f"\n[SUCESSO] CSV salvo (sem colunas de controle): {caminho}")
+            print(f"\n[SUCESSO] CSV salvo (sem colunas de controle): {caminho}\n")
+
+            
+            # --- NOVA PARTE DE ENVIO ---
+            print("\n--- Iniciando Envios Automáticos ---\n")
+            
+            # Enviar por E-mail
+            notifier.enviar_email(caminho, "Evelyn@sibbrasil.com")
+            # notifier.enviar_email(caminho, "mataugusto1999@gmail.com")
+            
+            # Enviar por WhatsApp
+            # notifier.enviar_whatsapp(caminho, "5521975531317")
+            print("\n[FIM] Processamento concluído.")
         else:
             print("\n[FIM] Todos os registros já estavam no banco. Nenhum CSV gerado.")
     else:
@@ -260,3 +276,4 @@ if lista_dfs:
 
 else:
     print("\n[FIM] Nenhuma licitação encontrada.")
+
